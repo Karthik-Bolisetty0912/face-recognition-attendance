@@ -1,0 +1,89 @@
+import pandas as pd
+import cv2
+import urllib.request
+import numpy as np
+import os
+import time
+from datetime import datetime
+import face_recognition
+
+# Configuration
+image_folder = r'C:\Users\Sanju\Downloads\ATTENDANCE\image_folder'
+camera_url = 'http://192.168.43.69/capture'
+attendance_file = "Attendance.csv"
+
+# Step 1: Prepare attendance file
+if not os.path.exists(attendance_file):
+    pd.DataFrame(columns=["Name", "Time"]).to_csv(attendance_file, index=False)
+
+# Step 2: Load and encode known images
+images = []
+classNames = []
+
+for file in os.listdir(image_folder):
+    path = os.path.join(image_folder, file)
+    img = cv2.imread(path)
+    if img is None:
+        continue
+    images.append(img)
+    classNames.append(os.path.splitext(file)[0])
+
+encodeListKnown = [
+    face_recognition.face_encodings(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))[0]
+    for img in images
+    if face_recognition.face_encodings(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+]
+
+# Step 3: Read image from ESP32-CAM
+def get_frame(url):
+    try:
+        img_resp = urllib.request.urlopen(url, timeout=5)
+        img_np = np.array(bytearray(img_resp.read()), dtype=np.uint8)
+        return cv2.imdecode(img_np, -1)
+    except:
+        return None
+
+# Step 4: Mark attendance
+def mark_attendance(name):
+    df = pd.read_csv(attendance_file)
+    if name not in df["Name"].values:
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        new_entry = pd.DataFrame([[name, now]], columns=["Name", "Time"])
+        df = pd.concat([df, new_entry], ignore_index=True)
+        df.to_csv(attendance_file, index=False)
+        print(f"Marked attendance for {name} at {now}")
+
+# Step 5: Main loop
+print("Starting attendance system. Press 'q' to quit.")
+while True:
+    img = get_frame(camera_url)
+    if img is None:
+        print("Failed to get image from camera.")
+        time.sleep(1)
+        continue
+
+    small_img = cv2.resize(img, (0, 0), fx=0.25, fy=0.25)
+    rgb_img = cv2.cvtColor(small_img, cv2.COLOR_BGR2RGB)
+
+    faces_cur_frame = face_recognition.face_locations(rgb_img)
+    encodes_cur_frame = face_recognition.face_encodings(rgb_img, faces_cur_frame)
+
+    for encodeFace, faceLoc in zip(encodes_cur_frame, faces_cur_frame):
+        matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
+        face_distances = face_recognition.face_distance(encodeListKnown, encodeFace)
+
+        match_index = np.argmin(face_distances) if face_distances.size else None
+        if match_index is not None and matches[match_index]:
+            name = classNames[match_index]
+            mark_attendance(name)
+
+            # Optional: Draw box on frame
+            y1, x2, y2, x1 = [v * 4 for v in faceLoc]
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(img, name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+    cv2.imshow("ESP32-CAM Attendance", img)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cv2.destroyAllWindows()
