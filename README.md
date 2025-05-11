@@ -14,6 +14,7 @@ This project is a real-time face recognition–based attendance system built usi
 
 ### Hardware
 - ESP32-CAM (AI-Thinker)
+- FTDI MODULE
 - Micro USB cable
 - MICRO-SD Card (Upto 4GB)
 - External 5V power supply (recommended)
